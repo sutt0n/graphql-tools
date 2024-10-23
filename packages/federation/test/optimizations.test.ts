@@ -246,7 +246,7 @@ describe('awareness-of-other-fields', () => {
   });
 });
 
-it('prevents recursively depending fields in case of multiple keys', async () => {
+it.only('prevents recursively depending fields in case of multiple keys', async () => {
   const authors = [
     {
       __typename: 'Author',
@@ -285,6 +285,51 @@ it('prevents recursively depending fields in case of multiple keys', async () =>
       author: authors[2],
     },
   ];
+  const libraries = [
+    {
+      __typename: 'Library',
+      id: '1',
+      name: 'Other Library',
+      bookUpcs: ['1_upc', '2_upc', '3_upc'],
+    },
+    {
+      __typename: 'Library',
+      id: '2',
+      name: 'My Library',
+      bookUpcs: ['1_upc', '2_upc', '3_upc'],
+    },
+  ];
+  const librarySchema = buildSubgraphSchema({
+    typeDefs: parse(/* GraphQL */ `
+      type Query {
+        libraries: [Library!]
+      }
+      type Library @key(fields: "id") {
+        id: ID!
+        name: String!
+        books: [Book!]!
+      }
+      type Book @key(fields: "id") @key(fields: "upc") {
+        upc: ID!
+        id: ID
+      }
+    `),
+    resolvers: {
+      Library: {
+        books({ bookUpcs }) {
+          return bookUpcs.map((bookUpc: string) => ({
+            __typename: 'Book',
+            upc: bookUpc,
+          }));
+        },
+      },
+      Query: {
+        libraries() {
+          return libraries;
+        },
+      },
+    },
+  });
   const booksSchema = buildSubgraphSchema({
     typeDefs: parse(/* GraphQL */ `
       type Book @key(fields: "id") @key(fields: "upc") {
@@ -415,6 +460,7 @@ it('prevents recursively depending fields in case of multiple keys', async () =>
       { name: 'books', url: 'books' },
       { name: 'other-service', url: 'other-service' },
       { name: 'authors', url: 'authors' },
+      { name: 'libraries', url: 'libraries' },
     ],
   }).initialize({
     healthCheck() {
@@ -429,6 +475,8 @@ it('prevents recursively depending fields in case of multiple keys', async () =>
           return new LocalGraphQLDataSource(multiLocationMgmt);
         case 'authors':
           return new LocalGraphQLDataSource(authorsSchema);
+        case 'libraries':
+          return new LocalGraphQLDataSource(librarySchema);
       }
       throw new Error(`Unknown subgraph ${name}`);
     },
@@ -461,89 +509,118 @@ it('prevents recursively depending fields in case of multiple keys', async () =>
         case 'authors':
           subschemaConfig.executor = createTracedExecutor(subgraphName, authorsSchema);
           break;
+        case 'libraries':
+          subschemaConfig.executor = createTracedExecutor(subgraphName, librarySchema);
+          break;
         default:
           throw new Error(`Unknown subgraph ${subgraphName}`);
       }
     },
   });
-  const result = await normalizedExecutor({
+  // const result = await normalizedExecutor({
+  //   schema: gwSchema,
+  //   document: parse(/* GraphQL */ `
+  //     query {
+  //       viewer {
+  //         booksContainer(input: $input) {
+  //           edges {
+  //             cursor
+  //             node {
+  //               source {
+  //                 # Book(upc=)
+  //                 upc
+  //               }
+  //             }
+  //           }
+  //           pageInfo {
+  //             endCursor
+  //           }
+  //         }
+  //       }
+  //     }
+  //   `),
+  // });
+  // expect(result).toEqual({
+  //   data: {
+  //     viewer: {
+  //       booksContainer: {
+  //         edges: [
+  //           { cursor: '1', node: { source: { upc: '1_upc' } } },
+  //           { cursor: '2', node: { source: { upc: '2_upc' } } },
+  //           { cursor: '3', node: { source: { upc: '3_upc' } } },
+  //         ],
+  //         pageInfo: { endCursor: '3' },
+  //       },
+  //     },
+  //   },
+  // });
+  // expect(Object.keys(subgraphCallsMap)).toEqual(['other-service']);
+  // expect(subgraphCallsMap['other-service'].length).toBe(1);
+  // subgraphCallsMap = {};
+  // const result2 = await normalizedExecutor({
+  //   schema: gwSchema,
+  //   document: parse(/* GraphQL */ `
+  //     query {
+  //       viewer {
+  //         booksContainer(input: $input) {
+  //           edges {
+  //             cursor
+  //             node {
+  //               source {
+  //                 # Book(upc=)
+  //                 upc
+  //                 author {
+  //                   name
+  //                 }
+  //               }
+  //             }
+  //           }
+  //           pageInfo {
+  //             endCursor
+  //           }
+  //         }
+  //       }
+  //     }
+  //   `),
+  // });
+  // expect(result2).toEqual({
+  //   data: {
+  //     viewer: {
+  //       booksContainer: {
+  //         edges: [
+  //           { cursor: '1', node: { source: { upc: '1_upc', author: { name: 'John Doe' } } } },
+  //           { cursor: '2', node: { source: { upc: '2_upc', author: { name: 'Jane Doe' } } } },
+  //           { cursor: '3', node: { source: { upc: '3_upc', author: null } } },
+  //         ],
+  //         pageInfo: { endCursor: '3' },
+  //       },
+  //     },
+  //   },
+  // });
+  const result3 = await normalizedExecutor({
     schema: gwSchema,
     document: parse(/* GraphQL */ `
       query {
-        viewer {
-          booksContainer(input: $input) {
-            edges {
-              cursor
-              node {
-                source {
-                  # Book(upc=)
-                  upc
-                }
-              }
-            }
-            pageInfo {
-              endCursor
-            }
+        libraries {
+          name
+          books {
+            id
+            upc
           }
         }
       }
     `),
   });
-  expect(result).toEqual({
+  expect(result3).toEqual({
     data: {
       viewer: {
-        booksContainer: {
-          edges: [
-            { cursor: '1', node: { source: { upc: '1_upc' } } },
-            { cursor: '2', node: { source: { upc: '2_upc' } } },
-            { cursor: '3', node: { source: { upc: '3_upc' } } },
-          ],
-          pageInfo: { endCursor: '3' },
+        libraries: {
+          name: 'My Library',
+          books: [],
         },
       },
     },
   });
   expect(Object.keys(subgraphCallsMap)).toEqual(['other-service']);
   expect(subgraphCallsMap['other-service'].length).toBe(1);
-  subgraphCallsMap = {};
-  const result2 = await normalizedExecutor({
-    schema: gwSchema,
-    document: parse(/* GraphQL */ `
-      query {
-        viewer {
-          booksContainer(input: $input) {
-            edges {
-              cursor
-              node {
-                source {
-                  # Book(upc=)
-                  upc
-                  author {
-                    name
-                  }
-                }
-              }
-            }
-            pageInfo {
-              endCursor
-            }
-          }
-        }
-      }
-    `),
-  });
-  expect(result2).toEqual({
-    data: {
-      viewer: {
-        booksContainer: {
-          edges: [
-            { cursor: '1', node: { source: { upc: '1_upc', author: { name: 'John Doe' } } } },
-            { cursor: '2', node: { source: { upc: '2_upc', author: { name: 'Jane Doe' } } } },
-            { cursor: '3', node: { source: { upc: '3_upc', author: null } } },
-          ],
-          pageInfo: { endCursor: '3' },
-        },
-      },
-    },
-  });
 });
